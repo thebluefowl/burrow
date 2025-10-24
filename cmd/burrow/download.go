@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/fatih/color"
@@ -27,6 +28,7 @@ func init() {
 
 // runDownload is the main entry point for the download command
 func runDownload(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
 	objectID := args[0]
 	destPath := args[1]
 
@@ -35,7 +37,12 @@ func runDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config error: %w", err)
 	}
 
-	downloader := download.NewDownloader(cfg, objectID, destPath, unarchiveFlag)
+	b2Client, err := initB2Client(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	downloader := download.NewDownloader(cfg, objectID, destPath, unarchiveFlag, b2Client)
 	if err := downloader.Execute(); err != nil {
 		return err
 	}

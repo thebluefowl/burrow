@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/thebluefowl/burrow/internal/archive"
+	"github.com/thebluefowl/burrow/internal/compress"
 	"github.com/thebluefowl/burrow/internal/config"
 	"github.com/thebluefowl/burrow/internal/enc"
 	"github.com/thebluefowl/burrow/internal/pipeline"
@@ -34,7 +35,7 @@ type B2Uploader interface {
 
 // EncryptionPipelineResult contains the results of the encryption pipeline
 type EncryptionPipelineResult struct {
-	CompressInfo *archive.CompressInfo
+	CompressInfo *compress.CompressInfo
 	AEADResult   *enc.AEADResult
 }
 
@@ -57,7 +58,7 @@ type encryptionPipeline struct {
 	src  string
 	dst  io.Writer
 
-	compressInfo *archive.CompressInfo
+	compressInfo *compress.CompressInfo
 	aeadResult   *enc.AEADResult
 }
 
@@ -115,14 +116,14 @@ func (ep *encryptionPipeline) compressStage(ctx context.Context, r io.Reader, w 
 	bar := progress.CreateProgressBar("🗜️  COMPRESS")
 	defer func() { _ = bar.Finish() }()
 
-	compCfg := archive.CompressorConfig{
-		Mode:          archive.CompressionMode("auto"),
+	compCfg := compress.CompressorConfig{
+		Mode:          compress.CompressionMode("auto"),
 		ZstdLevel:     compressionLevel,
 		AutoMinSaving: compressionMinSaving,
 		SampleBytes:   compressionSampleSize,
 	}
 
-	compWriter, compInfo, err := archive.NewCompressorWithInfo(w, compCfg)
+	compWriter, compInfo, err := compress.NewCompressorWithInfo(w, compCfg)
 	if err != nil {
 		return fmt.Errorf("compress stage setup: %w", err)
 	}

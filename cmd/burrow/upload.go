@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/fatih/color"
@@ -19,6 +20,7 @@ var uploadCmd = &cobra.Command{
 
 // runUpload is the main entry point for the upload command
 func runUpload(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
 	sourcePath := args[0]
 
 	cfg, err := loadOrSetupConfig()
@@ -26,7 +28,12 @@ func runUpload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config error: %w", err)
 	}
 
-	uploader := upload.NewUploader(cfg, sourcePath)
+	b2Client, err := initB2Client(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	uploader := upload.NewUploader(cfg, sourcePath, b2Client)
 	if err := uploader.Execute(); err != nil {
 		return err
 	}

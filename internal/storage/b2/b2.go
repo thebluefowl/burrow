@@ -25,7 +25,7 @@ type B2Client struct {
 }
 
 // Config holds options to initialize the uploader.
-type Config struct {
+type Opts struct {
 	Bucket      string
 	Region      string
 	Endpoint    string
@@ -36,21 +36,21 @@ type Config struct {
 }
 
 // NewB2Client builds a new client configured for Backblaze B2.
-func NewB2Client(ctx context.Context, cfg Config) (*B2Client, error) {
-	if cfg.PartSizeMB <= 0 {
-		cfg.PartSizeMB = 16
+func New(ctx context.Context, opts *Opts) (*B2Client, error) {
+	if opts.PartSizeMB <= 0 {
+		opts.PartSizeMB = 16
 	}
-	if cfg.Concurrency <= 0 {
-		cfg.Concurrency = 4
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = 4
 	}
 
 	loadOpts := []func(*config.LoadOptions) error{
-		config.WithRegion(cfg.Region),
-		config.WithBaseEndpoint(cfg.Endpoint),
+		config.WithRegion(opts.Region),
+		config.WithBaseEndpoint(opts.Endpoint),
 	}
-	if cfg.AccessKey != "" && cfg.SecretKey != "" {
+	if opts.AccessKey != "" && opts.SecretKey != "" {
 		loadOpts = append(loadOpts,
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")))
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, "")))
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
@@ -62,9 +62,9 @@ func NewB2Client(ctx context.Context, cfg Config) (*B2Client, error) {
 
 	return &B2Client{
 		client:      client,
-		bucket:      cfg.Bucket,
-		partSizeMB:  cfg.PartSizeMB,
-		concurrency: cfg.Concurrency,
+		bucket:      opts.Bucket,
+		partSizeMB:  opts.PartSizeMB,
+		concurrency: opts.Concurrency,
 	}, nil
 }
 
