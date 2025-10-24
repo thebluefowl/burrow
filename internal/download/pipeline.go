@@ -1,13 +1,12 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/thebluefowl/burrow/internal/archive"
 	"github.com/thebluefowl/burrow/internal/compress"
 	"github.com/thebluefowl/burrow/internal/enc"
@@ -57,10 +56,10 @@ func (dp *decryptionPipeline) execute(ctx context.Context) error {
 	return nil
 }
 
-// downloadStage downloads the encrypted data from B2
+// downloadStage downloads the encrypted data from storage
 func (dp *decryptionPipeline) downloadStage(ctx context.Context, r io.Reader, w io.Writer) error {
-	if dp.opts.B2Client == nil {
-		return fmt.Errorf("B2 client is required for download")
+	if dp.opts.Storage == nil {
+		return fmt.Errorf("storage client is required for download")
 	}
 
 	bar := progress.CreateProgressBar("☁️  DOWNLOAD")
@@ -68,19 +67,15 @@ func (dp *decryptionPipeline) downloadStage(ctx context.Context, r io.Reader, w 
 
 	key := "data/" + dp.opts.ObjectID + ".enc"
 
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(dp.opts.B2Client.GetBucket()),
-		Key:    aws.String(key),
-	}
+	var buf bytes.Buffer
+	progressWriter := io.MultiWriter(&buf, bar)
 
-	result, err := dp.opts.B2Client.GetClient().GetObject(ctx, input)
+	_, _, err := dp.opts.Storage.Download(ctx, key, progressWriter)
 	if err != nil {
 		return fmt.Errorf("download stage: %w", err)
 	}
-	defer result.Body.Close()
 
-	progressReader := io.TeeReader(result.Body, bar)
-	if _, err := io.Copy(w, progressReader); err != nil {
+	if _, err := io.Copy(w, &buf); err != nil {
 		return fmt.Errorf("download stage copy: %w", err)
 	}
 

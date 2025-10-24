@@ -1,16 +1,14 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/thebluefowl/burrow/internal/config"
 	"github.com/thebluefowl/burrow/internal/enc"
 	"github.com/thebluefowl/burrow/internal/envelope"
-	"github.com/thebluefowl/burrow/internal/storage/b2"
+	"github.com/thebluefowl/burrow/internal/storage"
 )
 
 // Downloader handles the complete download workflow
@@ -20,18 +18,18 @@ type Downloader struct {
 	destPath string
 
 	envelope  *envelope.Envelope
-	b2Client  *b2.B2Client
+	storage   storage.Storage
 	unarchive bool
 }
 
 // NewDownloader creates a new Downloader instance
-func NewDownloader(cfg *config.Config, objectID string, destPath string, unarchive bool, b2Client *b2.B2Client) *Downloader {
+func NewDownloader(cfg *config.Config, objectID string, destPath string, unarchive bool, storageClient storage.Storage) *Downloader {
 	return &Downloader{
 		config:    cfg,
 		objectID:  objectID,
 		destPath:  destPath,
 		unarchive: unarchive,
-		b2Client:  b2Client,
+		storage:   storageClient,
 	}
 }
 
@@ -53,22 +51,11 @@ func (d *Downloader) fetchEnvelope() error {
 	ctx := context.Background()
 	envelopeKey := "keys/" + d.objectID + ".envelope"
 
-	// Download envelope from B2
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(d.b2Client.GetBucket()),
-		Key:    aws.String(envelopeKey),
-	}
-
-	result, err := d.b2Client.GetClient().GetObject(ctx, input)
+	// Download envelope from storage
+	var buf bytes.Buffer
+	_, _, err := d.storage.Download(ctx, envelopeKey, &buf)
 	if err != nil {
-		return fmt.Errorf("get envelope %s: %w", envelopeKey, err)
-	}
-	defer result.Body.Close()
-
-	// Read envelope bytes
-	envBytes, err := io.ReadAll(result.Body)
-	if err != nil {
-		return fmt.Errorf("read envelope: %w", err)
+		return fmt.Errorf("download envelope %s: %w", envelopeKey, err)
 	}
 
 	// Decrypt and unmarshal envelope using age private key
@@ -77,7 +64,7 @@ func (d *Downloader) fetchEnvelope() error {
 	}
 
 	var env envelope.Envelope
-	decryptedEnv, err := env.Open(envBytes, decCfg)
+	decryptedEnv, err := env.Open(buf.Bytes(), decCfg)
 	if err != nil {
 		return fmt.Errorf("open envelope: %w", err)
 	}
@@ -86,13 +73,13 @@ func (d *Downloader) fetchEnvelope() error {
 	return nil
 }
 
-// downloadAndDecrypt performs the decryption pipeline and downloads from B2
+// downloadAndDecrypt performs the decryption pipeline and downloads from storage
 func (d *Downloader) downloadAndDecrypt() error {
 	opts := &DecryptionPipelineOpts{
 		ObjectID:  d.objectID,
 		Envelope:  d.envelope,
 		Config:    d.config,
-		B2Client:  d.b2Client,
+		Storage:   d.storage,
 		DestPath:  d.destPath,
 		Unarchive: d.unarchive,
 	}
@@ -105,7 +92,7 @@ type DecryptionPipelineOpts struct {
 	ObjectID  string
 	Envelope  *envelope.Envelope
 	Config    *config.Config
-	B2Client  *b2.B2Client
+	Storage   storage.Storage
 	DestPath  string
 	Unarchive bool
 }

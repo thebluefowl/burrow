@@ -11,7 +11,7 @@ import (
 	"github.com/thebluefowl/burrow/internal/compress"
 	"github.com/thebluefowl/burrow/internal/config"
 	"github.com/thebluefowl/burrow/internal/envelope"
-	"github.com/thebluefowl/burrow/internal/storage/b2"
+	"github.com/thebluefowl/burrow/internal/storage"
 )
 
 // Uploader handles the complete upload workflow
@@ -21,15 +21,15 @@ type Uploader struct {
 	objectID   string
 
 	envelope *envelope.Envelope
-	b2Client *b2.B2Client
+	storage  storage.Storage
 }
 
 // NewUploader creates a new Uploader instance
-func NewUploader(cfg *config.Config, sourcePath string, b2Client *b2.B2Client) *Uploader {
+func NewUploader(cfg *config.Config, sourcePath string, storageClient storage.Storage) *Uploader {
 	return &Uploader{
 		config:     cfg,
 		sourcePath: sourcePath,
-		b2Client:   b2Client,
+		storage:    storageClient,
 	}
 }
 
@@ -60,12 +60,12 @@ func (u *Uploader) initialize() error {
 	return nil
 }
 
-// encryptAndUpload performs the encryption pipeline and uploads to B2
+// encryptAndUpload performs the encryption pipeline and uploads to storage
 func (u *Uploader) encryptAndUpload() (*EncryptionPipelineResult, error) {
 	opts := &EncryptionPipelineOpts{
 		ObjectID: u.objectID,
 		Config:   u.config,
-		B2Client: u.b2Client,
+		B2Client: u.storage,
 	}
 
 	result, err := EncryptionPipeline(opts, u.sourcePath, nil)
@@ -109,7 +109,7 @@ func (u *Uploader) uploadEnvelope() error {
 
 	// Upload to /keys directory
 	key := "keys/" + u.objectID + ".envelope"
-	_, err = u.b2Client.Upload(ctx, key, bytes.NewReader(sealedEnvelope), "application/octet-stream", nil)
+	err = u.storage.Upload(ctx, key, bytes.NewReader(sealedEnvelope), "application/octet-stream", nil)
 	if err != nil {
 		return fmt.Errorf("failed to upload envelope: %w", err)
 	}

@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/thebluefowl/burrow/internal/archive"
 	"github.com/thebluefowl/burrow/internal/compress"
 	"github.com/thebluefowl/burrow/internal/config"
 	"github.com/thebluefowl/burrow/internal/enc"
 	"github.com/thebluefowl/burrow/internal/pipeline"
 	"github.com/thebluefowl/burrow/internal/progress"
+	"github.com/thebluefowl/burrow/internal/storage"
 )
 
 // Constants for pipeline configuration
@@ -25,12 +25,7 @@ const (
 type EncryptionPipelineOpts struct {
 	ObjectID string
 	Config   *config.Config
-	B2Client B2Uploader
-}
-
-// B2Uploader interface for uploading to B2
-type B2Uploader interface {
-	Upload(ctx context.Context, key string, body io.Reader, contentType string, metadata map[string]string) (*manager.UploadOutput, error)
+	B2Client storage.Storage
 }
 
 // EncryptionPipelineResult contains the results of the encryption pipeline
@@ -169,10 +164,10 @@ func (ep *encryptionPipeline) encryptStage(ctx context.Context, r io.Reader, w i
 	return nil
 }
 
-// uploadStage uploads the encrypted data to B2
+// uploadStage uploads the encrypted data to storage
 func (ep *encryptionPipeline) uploadStage(ctx context.Context, r io.Reader, w io.Writer) error {
 	if ep.opts.B2Client == nil {
-		return fmt.Errorf("B2 client is required for upload")
+		return fmt.Errorf("storage client is required for upload")
 	}
 
 	bar := progress.CreateProgressBar("☁️  UPLOAD  ")
@@ -181,7 +176,7 @@ func (ep *encryptionPipeline) uploadStage(ctx context.Context, r io.Reader, w io
 	key := "data/" + ep.opts.ObjectID + ".enc"
 	progressReader := io.TeeReader(r, bar)
 
-	_, err := ep.opts.B2Client.Upload(ctx, key, progressReader, "application/octet-stream", nil)
+	err := ep.opts.B2Client.Upload(ctx, key, progressReader, "application/octet-stream", nil)
 	if err != nil {
 		return fmt.Errorf("upload stage: %w", err)
 	}
