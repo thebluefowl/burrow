@@ -212,3 +212,32 @@ func buildAAD(objectID string, idx, ptLen uint64) []byte {
 	b.Write(tmp[:])
 	return b.Bytes()
 }
+
+// EncryptBytes encrypts a plaintext buffer using age (passphrase or recipients).
+func EncryptBytes(plain []byte, cfg EncryptConfig) ([]byte, error) {
+	var buf bytes.Buffer
+	w, err := NewEncryptWriter(&buf, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(plain); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// DecryptBytes decrypts an age ciphertext buffer to plaintext bytes.
+func DecryptBytes(ciphertext []byte, cfg DecryptConfig) ([]byte, error) {
+	r, err := NewDecryptReader(bytes.NewReader(ciphertext), cfg)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, r); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}

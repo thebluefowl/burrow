@@ -48,7 +48,7 @@ func (e *Envelope) Seal(recipients []string, armor bool) ([]byte, error) {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	_, err = enc.Encrypt(&buf, bytes.NewReader(raw), enc.EncryptConfig{Recipients: recipients, Armor: armor})
+	_, err = enc.EncryptAge(&buf, bytes.NewReader(raw), enc.EncryptConfig{Recipients: recipients, Armor: armor})
 	if err != nil {
 		return nil, fmt.Errorf("age seal: %w", err)
 	}

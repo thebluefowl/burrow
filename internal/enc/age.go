@@ -102,7 +102,7 @@ func NewEncryptWriter(dst io.Writer, cfg EncryptConfig) (io.WriteCloser, error) 
 
 // Encrypt copies all plaintext from r, encrypts it, and writes to dst.
 // It closes the internal age writer but does NOT close r or dst.
-func Encrypt(dst io.Writer, r io.Reader, cfg EncryptConfig) (int64, error) {
+func EncryptAge(dst io.Writer, r io.Reader, cfg EncryptConfig) (int64, error) {
 	w, err := NewEncryptWriter(dst, cfg)
 	if err != nil {
 		return 0, err
@@ -159,7 +159,7 @@ func NewDecryptReader(src io.Reader, cfg DecryptConfig) (io.Reader, error) {
 }
 
 // Decrypt reads age ciphertext from src, decrypts it, and writes plaintext to dst.
-func Decrypt(dst io.Writer, src io.Reader, cfg DecryptConfig) (int64, error) {
+func DecryptAge(dst io.Writer, src io.Reader, cfg DecryptConfig) (int64, error) {
 	r, err := NewDecryptReader(src, cfg)
 	if err != nil {
 		return 0, err
@@ -186,7 +186,7 @@ func EncryptFile(cfg EncryptConfig, inPath, outPath string) (int64, error) {
 		_ = out.Close()
 	}()
 
-	n, err := Encrypt(out, in, cfg)
+	n, err := EncryptAge(out, in, cfg)
 	if err != nil {
 		return n, err
 	}
@@ -209,7 +209,7 @@ func DecryptFile(cfg DecryptConfig, inPath, outPath string) (int64, error) {
 		_ = out.Close()
 	}()
 
-	n, err := Decrypt(out, in, cfg)
+	n, err := DecryptAge(out, in, cfg)
 	if err != nil {
 		return n, err
 	}

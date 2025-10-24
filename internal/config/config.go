@@ -1,18 +1,14 @@
 package config
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
-	"golang.org/x/crypto/pbkdf2"
+	// Replace this import path with your module path, e.g. "github.com/yourorg/burrow/internal/enc"
+	"github.com/thebluefowl/burrow/internal/enc"
 )
 
 var ErrConfigNotFound = errors.New("config not found")
@@ -27,60 +23,63 @@ type Config struct {
 	AgePrivateKey string `json:"age_private_key"`
 }
 
-// deriveKey creates an encryption key from the user's password
-func deriveKey(password string) []byte {
-	salt := []byte("burrow-config-salt-v1-2025")
-	return pbkdf2.Key([]byte(password), salt, 100000, 32, sha256.New)
+func configDirPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", err)
+	}
+	return filepath.Join(dir, "burrow"), nil
 }
 
-// Save encrypts and saves the config using the provided password
-func Save(config Config, password string) error {
-	configDir, err := os.UserConfigDir()
+func configFilePath() (string, error) {
+	dir, err := configDirPath()
 	if err != nil {
-		return fmt.Errorf("failed to get config directory: %w", err)
+		return "", err
 	}
+	return filepath.Join(dir, "config.enc"), nil
+}
 
-	burrowConfigDir := filepath.Join(configDir, "burrow")
-	if err := os.MkdirAll(burrowConfigDir, 0700); err != nil {
+// Save marshals and encrypts the config using age passphrase mode.
+func Save(cfg Config, password string) error {
+	dir, err := configDirPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
+	path, err := configFilePath()
+	if err != nil {
+		return err
+	}
 
-	configFile := filepath.Join(burrowConfigDir, "config.enc")
-
-	// Marshal config to JSON
-	jsonData, err := json.Marshal(config)
+	plain, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Derive encryption key from password
-	key := deriveKey(password)
-
-	// Encrypt the data
-	encryptedData, err := encrypt(jsonData, key)
+	ciphertext, err := enc.EncryptBytes(plain, enc.EncryptConfig{
+		Passphrase: password, // simple string password is fine (age handles salt/KDF)
+		Armor:      false,    // set true if you prefer ASCII armor
+	})
 	if err != nil {
 		return fmt.Errorf("failed to encrypt config: %w", err)
 	}
 
-	// Write encrypted data
-	if err := os.WriteFile(configFile, encryptedData, 0600); err != nil {
+	if err := os.WriteFile(path, ciphertext, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
-
 	return nil
 }
 
-// Load decrypts and loads the config using the provided password
+// Load reads, decrypts, and unmarshals the config using age passphrase mode.
 func Load(password string) (*Config, error) {
-	configDir, err := os.UserConfigDir()
+	path, err := configFilePath()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get config directory: %w", err)
+		return nil, err
 	}
 
-	configFile := filepath.Join(configDir, "burrow", "config.enc")
-
-	// Read encrypted data
-	encryptedData, err := os.ReadFile(configFile)
+	ciphertext, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrConfigNotFound
@@ -88,77 +87,25 @@ func Load(password string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Derive decryption key from password
-	key := deriveKey(password)
-
-	// Decrypt the data
-	jsonData, err := decrypt(encryptedData, key)
+	plain, err := enc.DecryptBytes(ciphertext, enc.DecryptConfig{
+		Passphrase: password,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt config (wrong password?): %w", err)
 	}
 
-	// Unmarshal JSON
-	var config Config
-	if err := json.Unmarshal(jsonData, &config); err != nil {
+	var cfg Config
+	if err := json.Unmarshal(plain, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-
-	return &config, nil
+	return &cfg, nil
 }
 
 func Exists() bool {
-	configDir, err := os.UserConfigDir()
+	path, err := configFilePath()
 	if err != nil {
 		return false
 	}
-	path := filepath.Join(configDir, "burrow", "config.enc")
-	_, err = os.Stat(path)
-	return !os.IsNotExist(err)
-}
-
-// encrypt encrypts data using AES-GCM
-func encrypt(plaintext, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
-}
-
-// decrypt decrypts data using AES-GCM
-func decrypt(ciphertext, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return plaintext, nil
+	_, statErr := os.Stat(path)
+	return !os.IsNotExist(statErr)
 }
