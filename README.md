@@ -25,13 +25,13 @@ A secure, encrypted backup tool for Backblaze B2 cloud storage. Burrow provides 
 ```bash
 git clone https://github.com/thebluefowl/burrow.git
 cd burrow
-go build -o burrow ./cmd/bbb
+go build -o burrow ./cmd/burrow
 ```
 
 ### Install to System
 
 ```bash
-go install github.com/thebluefowl/burrow/cmd/bbb@latest
+go install github.com/thebluefowl/burrow/cmd/burrow@latest
 ```
 
 ## Quick Start
@@ -157,13 +157,14 @@ burrow/
 ├── cmd/burrow/           # CLI commands
 ├── internal/
 │   ├── archive/       # Tar archiving
-│   ├── b2/           # Backblaze B2 client
+│   ├── compress/      # Compression utilities
 │   ├── config/        # Configuration management
 │   ├── download/      # Download pipeline
 │   ├── enc/          # Encryption (AEAD, age)
 │   ├── envelope/     # Metadata management
 │   ├── pipeline/     # Processing pipeline
 │   ├── progress/     # Progress tracking
+│   ├── storage/      # Storage backend interface (B2)
 │   └── upload/       # Upload pipeline
 └── testdata/         # Test files
 ```
