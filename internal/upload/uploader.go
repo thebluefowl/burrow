@@ -93,6 +93,7 @@ func (u *Uploader) fillEnvelope(result *EncryptionPipelineResult) {
 		u.envelope.Compression.Mode = string(compress.CompressNone)
 	}
 
+	u.envelope.CipherSHA = result.CipherSHA
 	u.envelope.CreatedAt = time.Now()
 }
 

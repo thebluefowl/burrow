@@ -29,6 +29,7 @@ type Envelope struct {
 	Encryption       Encryption        `json:"encryption"`
 	Compression      Compression       `json:"compression"`
 	PlainSHA         [32]byte          `json:"plain_sha"`
+	CipherSHA        [32]byte          `json:"cipher_sha"`
 	OriginalFileName string            `json:"original_file_name"`
 	Metadata         map[string]string `json:"metadata"`
 	CreatedAt        time.Time

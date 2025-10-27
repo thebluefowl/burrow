@@ -2,6 +2,7 @@ package upload
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 
@@ -32,6 +33,7 @@ type EncryptionPipelineOpts struct {
 type EncryptionPipelineResult struct {
 	CompressInfo *compress.CompressInfo
 	AEADResult   *enc.AEADResult
+	CipherSHA    [32]byte
 }
 
 // EncryptionPipeline executes the complete encryption pipeline
@@ -55,6 +57,7 @@ type encryptionPipeline struct {
 
 	compressInfo *compress.CompressInfo
 	aeadResult   *enc.AEADResult
+	cipherSHA    [32]byte
 }
 
 // execute runs the complete pipeline
@@ -85,6 +88,7 @@ func (ep *encryptionPipeline) execute(ctx context.Context) (*EncryptionPipelineR
 	return &EncryptionPipelineResult{
 		CompressInfo: ep.compressInfo,
 		AEADResult:   ep.aeadResult,
+		CipherSHA:    ep.cipherSHA,
 	}, nil
 }
 
@@ -174,12 +178,18 @@ func (ep *encryptionPipeline) uploadStage(ctx context.Context, r io.Reader, w io
 	defer func() { _ = bar.Finish() }()
 
 	key := "data/" + ep.opts.ObjectID + ".enc"
-	progressReader := io.TeeReader(r, bar)
+
+	// Compute SHA256 of the ciphertext while uploading
+	hasher := sha256.New()
+	progressReader := io.TeeReader(r, io.MultiWriter(bar, hasher))
 
 	err := ep.opts.B2Client.Upload(ctx, key, progressReader, "application/octet-stream", nil)
 	if err != nil {
 		return fmt.Errorf("upload stage: %w", err)
 	}
+
+	// Store the ciphertext checksum
+	copy(ep.cipherSHA[:], hasher.Sum(nil))
 
 	return nil
 }

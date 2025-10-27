@@ -3,6 +3,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -68,11 +69,19 @@ func (dp *decryptionPipeline) downloadStage(ctx context.Context, r io.Reader, w 
 	key := "data/" + dp.opts.ObjectID + ".enc"
 
 	var buf bytes.Buffer
-	progressWriter := io.MultiWriter(&buf, bar)
+	hasher := sha256.New()
+	progressWriter := io.MultiWriter(&buf, bar, hasher)
 
 	_, _, err := dp.opts.Storage.Download(ctx, key, progressWriter)
 	if err != nil {
 		return fmt.Errorf("download stage: %w", err)
+	}
+
+	// Verify the ciphertext SHA256
+	var downloadedSHA [32]byte
+	copy(downloadedSHA[:], hasher.Sum(nil))
+	if !enc.VerifySHA256(downloadedSHA, dp.opts.Envelope.CipherSHA) {
+		return fmt.Errorf("ciphertext SHA256 verification failed: downloaded data does not match expected checksum")
 	}
 
 	if _, err := io.Copy(w, &buf); err != nil {
