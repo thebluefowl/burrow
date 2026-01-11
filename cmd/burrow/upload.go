@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/thebluefowl/burrow/internal/config"
+	"github.com/thebluefowl/burrow/internal/index"
 	"github.com/thebluefowl/burrow/internal/upload"
 )
 
@@ -23,7 +26,7 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	sourcePath := args[0]
 
-	cfg, err := loadOrSetupConfig()
+	cfg, password, err := loadOrSetupConfigWithPassword()
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
 	}
@@ -38,7 +41,20 @@ func runUpload(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printUploadSuccess(uploader.ObjectID())
+	objectID := uploader.ObjectID()
+	
+	// Add entry to local index
+	entry := index.Entry{
+		ObjectID:  objectID,
+		FileName:  filepath.Base(sourcePath),
+		CreatedAt: time.Now(),
+	}
+	if err := index.AddEntry(password, entry); err != nil {
+		// Log warning but don't fail the upload
+		color.Yellow("⚠ Warning: Failed to update local index: %v\n", err)
+	}
+
+	printUploadSuccess(objectID)
 	return nil
 }
 
@@ -49,19 +65,26 @@ func printUploadSuccess(objectID string) {
 
 // loadOrSetupConfig loads existing config or runs setup
 func loadOrSetupConfig() (*config.Config, error) {
+	cfg, _, err := loadOrSetupConfigWithPassword()
+	return cfg, err
+}
+
+// loadOrSetupConfigWithPassword loads existing config or runs setup, returning both config and password
+func loadOrSetupConfigWithPassword() (*config.Config, string, error) {
 	if !config.Exists() {
-		return setup()
+		return setupWithPassword()
 	}
 
 	password, err := askMasterPassword()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get master password: %w", err)
+		return nil, "", fmt.Errorf("failed to get master password: %w", err)
 	}
 
 	cfg, err := config.Load(password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, "", fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return cfg, nil
+	return cfg, password, nil
 }
+

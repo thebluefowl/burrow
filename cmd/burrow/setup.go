@@ -13,12 +13,17 @@ import (
 )
 
 func setup() (*config.Config, error) {
+	cfg, _, err := setupWithPassword()
+	return cfg, err
+}
+
+func setupWithPassword() (*config.Config, string, error) {
 	color.New(color.BgWhite).Println("Set up master password")
 	color.Yellow(Wrap("⚠ Forgetting your master password will result in data loss.  Be sure to write it down somewhere safe.", 60))
 	fmt.Println()
 	password, err := setupMasterPassword()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	fmt.Println()
@@ -27,7 +32,7 @@ func setup() (*config.Config, error) {
 
 	cfg, err := setupConfig(password)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	color.Green("✓ Configuration saved successfully!")
@@ -39,7 +44,7 @@ func setup() (*config.Config, error) {
 
 	fmt.Println(boxStyle.Render(fmt.Sprintf("Public Key: %s", cfg.AgePublicKey)))
 
-	return cfg, nil
+	return cfg, password, nil
 }
 
 func setupConfig(password string) (*config.Config, error) {

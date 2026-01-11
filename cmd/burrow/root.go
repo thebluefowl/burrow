@@ -25,6 +25,9 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(downloadCmd)
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(indexCmd)
+	rootCmd.AddCommand(configCmd)
 }
 
 // initB2Client creates a B2 client from config
