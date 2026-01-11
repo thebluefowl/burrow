@@ -12,6 +12,9 @@ A secure, encrypted backup tool for Backblaze B2 cloud storage. Burrow provides 
 - 📊 **Progress Tracking**: Real-time progress bars for upload/download operations
 - 🛡️ **Cryptographic Integrity**: SHA-256 verification for data integrity
 - 🚀 **Efficient Uploads**: Multi-part uploads with configurable concurrency
+- 📋 **Local Index**: Fast file listing with encrypted local index (no API calls needed)
+- 🔄 **Index Management**: Rebuild index from storage when needed
+- ⚙️ **Configuration Management**: Update settings without re-running setup
 
 ## Installation
 
@@ -63,7 +66,16 @@ burrow upload document.pdf
 burrow upload /home/user/documents
 ```
 
-### 3. Download Files
+### 3. List Your Backups
+
+```bash
+# List all uploaded files with their object IDs and names
+burrow list
+```
+
+This shows all your uploaded files with their object IDs, original file names, and upload dates. The list is stored locally in an encrypted index file, so it's fast and doesn't require API calls.
+
+### 4. Download Files
 
 ```bash
 # Download and extract to directory
@@ -72,6 +84,8 @@ burrow download <object-id> /path/to/destination --extract
 # Download as encrypted file
 burrow download <object-id> /path/to/destination
 ```
+
+**Tip**: Use `burrow list` to find the object ID of the file you want to download.
 
 ## Usage
 
@@ -93,6 +107,37 @@ burrow upload /path/to/directory
 - Generates unique object IDs for each upload
 - Shows real-time progress during upload
 
+#### `list`
+
+Lists all uploaded files from your local encrypted index.
+
+```bash
+burrow list
+```
+
+**Features:**
+
+- Fast listing (reads from local encrypted index, no API calls)
+- Shows object ID, file name, and upload date
+- Automatically updated on each upload
+
+#### `index`
+
+Rebuilds the local index by scanning all envelope files in storage.
+
+```bash
+burrow index
+```
+
+**Use when:**
+
+- Local index file is deleted or corrupted
+- Index is out of sync with storage
+- Setting up on a new machine
+- Need to verify all files are indexed
+
+**Note**: This command makes API calls to download and decrypt envelopes, so it's slower than `list`.
+
 #### `download <object-id> <destination>`
 
 Downloads and decrypts files from Backblaze B2.
@@ -105,6 +150,24 @@ burrow download abc123def456 /home/user/restored --extract
 **Options:**
 
 - `--extract, -x`: Extract tar archives to destination directory
+
+**Tip**: Use `burrow list` to find the object ID of files you want to download.
+
+#### `config update`
+
+Updates your Backblaze B2 configuration settings.
+
+```bash
+burrow config update
+```
+
+You can update:
+- Backblaze Key ID
+- Backblaze Application Key
+- Bucket Name
+- Region
+
+Leave fields empty to keep current values.
 
 ## Architecture
 
@@ -127,19 +190,45 @@ Burrow uses a multi-stage encryption pipeline:
 
 ### File Structure
 
+**Storage (Backblaze B2):**
 ```
 /data/<object-id>.enc     # Encrypted data
-/keys/<object-id>.envelope # Encrypted metadata
+/keys/<object-id>.envelope # Encrypted metadata (contains file name, encryption params)
 ```
+
+**Local (encrypted):**
+```
+~/.config/burrow/
+  ├── config.enc          # Encrypted configuration
+  └── index.enc           # Encrypted local index (for fast file listing)
+```
+
+The local index allows fast file listing without API calls. It's automatically updated on each upload and can be rebuilt using `burrow index` if needed.
 
 ## Configuration
 
-Configuration is stored encrypted in `~/.config/burrow/config.enc` and includes:
+Configuration is stored encrypted in `~/.config/burrow/` and includes:
 
-- Backblaze B2 credentials
-- Age encryption keys
-- Master key for data encryption
-- Upload settings (region, bucket)
+- **config.enc**: Encrypted configuration file containing:
+  - Backblaze B2 credentials
+  - Age encryption keys
+  - Master key for data encryption
+  - Upload settings (region, bucket)
+- **index.enc**: Encrypted local index file containing:
+  - Object IDs
+  - Original file names
+  - Upload timestamps
+  - File sizes
+
+### Updating Configuration
+
+You can update your configuration without re-running setup:
+
+```bash
+burrow config update
+```
+
+This allows you to change Backblaze credentials, bucket name, or region while preserving your encryption keys.
 
 ### Security Considerations
 
@@ -155,6 +244,15 @@ Configuration is stored encrypted in `~/.config/burrow/config.enc` and includes:
 ```
 burrow/
 ├── cmd/burrow/           # CLI commands
+│   ├── main.go          # Entry point
+│   ├── root.go          # Root command
+│   ├── upload.go        # Upload command
+│   ├── download.go      # Download command
+│   ├── list.go          # List command
+│   ├── index.go         # Index rebuild command
+│   ├── config.go        # Config command group
+│   ├── update.go        # Config update command
+│   └── setup.go         # Initial setup
 ├── internal/
 │   ├── archive/       # Tar archiving
 │   ├── compress/      # Compression utilities
@@ -162,6 +260,7 @@ burrow/
 │   ├── download/      # Download pipeline
 │   ├── enc/          # Encryption (AEAD, age)
 │   ├── envelope/     # Metadata management
+│   ├── index/        # Local index management
 │   ├── pipeline/     # Processing pipeline
 │   ├── progress/     # Progress tracking
 │   ├── storage/      # Storage backend interface (B2)
