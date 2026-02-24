@@ -12,4 +12,6 @@ var configCmd = &cobra.Command{
 
 func init() {
 	configCmd.AddCommand(updateCmd)
+	configCmd.AddCommand(exportCmd)
+	configCmd.AddCommand(restoreCmd)
 }

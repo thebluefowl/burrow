@@ -38,8 +38,16 @@ func (dp *decryptionPipeline) execute(ctx context.Context) error {
 		return fmt.Errorf("masterKey is required")
 	}
 
+	// Choose the first stage based on whether we have a local ciphertext file
+	var firstStage pipeline.Stage
+	if dp.opts.CiphertextPath != "" {
+		firstStage = dp.readFileStage
+	} else {
+		firstStage = dp.downloadStage
+	}
+
 	stages := []pipeline.Stage{
-		dp.downloadStage,
+		firstStage,
 		dp.decryptStage,
 		dp.decompressStage,
 	}
@@ -57,7 +65,26 @@ func (dp *decryptionPipeline) execute(ctx context.Context) error {
 	return nil
 }
 
-// downloadStage downloads the encrypted data from storage
+// readFileStage reads ciphertext from a local file (used when ciphertext was already downloaded)
+func (dp *decryptionPipeline) readFileStage(ctx context.Context, r io.Reader, w io.Writer) error {
+	bar := progress.CreateProgressBar("📄 READ    ")
+	defer func() { _ = bar.Finish() }()
+
+	f, err := os.Open(dp.opts.CiphertextPath)
+	if err != nil {
+		return fmt.Errorf("open ciphertext file: %w", err)
+	}
+	defer f.Close()
+
+	progressReader := io.TeeReader(f, bar)
+	if _, err := io.Copy(w, progressReader); err != nil {
+		return fmt.Errorf("read ciphertext: %w", err)
+	}
+
+	return nil
+}
+
+// downloadStage downloads the encrypted data from storage (legacy path, used when no CiphertextPath)
 func (dp *decryptionPipeline) downloadStage(ctx context.Context, r io.Reader, w io.Writer) error {
 	if dp.opts.Storage == nil {
 		return fmt.Errorf("storage client is required for download")
@@ -153,7 +180,7 @@ func (dp *decryptionPipeline) decompressStage(ctx context.Context, r io.Reader, 
 }
 
 func (dp *decryptionPipeline) unarchiveStage(ctx context.Context, r io.Reader, w io.Writer) error {
-	bar := progress.CreateProgressBar("�� EXTRACT ")
+	bar := progress.CreateProgressBar("📦 EXTRACT ")
 	defer func() { _ = bar.Finish() }()
 
 	progressReader := io.TeeReader(r, bar)
@@ -163,9 +190,8 @@ func (dp *decryptionPipeline) unarchiveStage(ctx context.Context, r io.Reader, w
 	return nil
 }
 
-// outputStage writes to file
+// fileOutputStage writes to file
 func (dp *decryptionPipeline) fileOutputStage(ctx context.Context, r io.Reader, _ io.Writer) error {
-	// Write to file
 	bar := progress.CreateProgressBar("💾 WRITE   ")
 	defer func() { _ = bar.Finish() }()
 	if dp.opts.DestPath == "" {

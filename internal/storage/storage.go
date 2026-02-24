@@ -25,6 +25,25 @@ type Storage interface {
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 }
 
+// ResumableStorage extends Storage with multipart upload and range download capabilities.
+type ResumableStorage interface {
+	Storage
+	CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (uploadID string, err error)
+	UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.ReadSeeker, contentLength int64) (etag string, err error)
+	CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []CompletedUploadPart) error
+	AbortMultipartUpload(ctx context.Context, key, uploadID string) error
+	ListParts(ctx context.Context, key, uploadID string) ([]CompletedUploadPart, error)
+	HeadObject(ctx context.Context, key string) (size int64, err error)
+	DownloadRange(ctx context.Context, key string, w io.Writer, offset, length int64) error
+}
+
+// CompletedUploadPart records a successfully uploaded multipart part.
+type CompletedUploadPart struct {
+	PartNumber int32
+	ETag       string
+	Size       int64
+}
+
 // ObjectInfo contains metadata about a stored object.
 type ObjectInfo struct {
 	Key          string

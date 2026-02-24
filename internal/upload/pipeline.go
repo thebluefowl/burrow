@@ -1,6 +1,7 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -27,6 +28,14 @@ type EncryptionPipelineOpts struct {
 	ObjectID string
 	Config   *config.Config
 	B2Client storage.Storage
+
+	// Resume fields — set when resuming a previous upload
+	ResumeParams      *enc.AEADParams // reuse NBase from previous attempt
+	ResumeCompression string          // force compression mode ("zstd" or "none")
+	ResumeSkipBytes   int64           // ciphertext bytes to skip (already uploaded)
+	UploadID          string          // S3 multipart upload ID
+	PartSize          int64           // bytes per upload part
+	OnPartUploaded    func(partNumber int32, etag string, size int64)
 }
 
 // EncryptionPipelineResult contains the results of the encryption pipeline
@@ -92,7 +101,7 @@ func (ep *encryptionPipeline) execute(ctx context.Context) (*EncryptionPipelineR
 	}, nil
 }
 
-// tarStage creates a tar archive from the source
+// archiveStage creates a tar archive from the source
 func (ep *encryptionPipeline) archiveStage(ctx context.Context, r io.Reader, w io.Writer) error {
 	bar := progress.CreateProgressBar("📦 ARCHIVE ")
 	defer func() { _ = bar.Finish() }()
@@ -115,8 +124,13 @@ func (ep *encryptionPipeline) compressStage(ctx context.Context, r io.Reader, w 
 	bar := progress.CreateProgressBar("🗜️  COMPRESS")
 	defer func() { _ = bar.Finish() }()
 
+	mode := compress.CompressAuto
+	if ep.opts.ResumeCompression != "" {
+		mode = compress.CompressionMode(ep.opts.ResumeCompression)
+	}
+
 	compCfg := compress.CompressorConfig{
-		Mode:          compress.CompressionMode("auto"),
+		Mode:          mode,
 		ZstdLevel:     compressionLevel,
 		AutoMinSaving: compressionMinSaving,
 		SampleBytes:   compressionSampleSize,
@@ -147,9 +161,15 @@ func (ep *encryptionPipeline) encryptStage(ctx context.Context, r io.Reader, w i
 	bar := progress.CreateProgressBar("🔒 ENCRYPT ")
 	defer func() { _ = bar.Finish() }()
 
-	params, err := enc.NewAEADParams(ep.opts.ObjectID, enc.AEADDefaultChunkSize)
-	if err != nil {
-		return fmt.Errorf("new aead params: %w", err)
+	var params enc.AEADParams
+	if ep.opts.ResumeParams != nil {
+		params = *ep.opts.ResumeParams
+	} else {
+		var err error
+		params, err = enc.NewAEADParams(ep.opts.ObjectID, enc.AEADDefaultChunkSize)
+		if err != nil {
+			return fmt.Errorf("new aead params: %w", err)
+		}
 	}
 
 	dataKey, err := enc.DeriveDataKey(ep.opts.Config.MasterKey, ep.opts.ObjectID)
@@ -174,12 +194,17 @@ func (ep *encryptionPipeline) uploadStage(ctx context.Context, r io.Reader, w io
 		return fmt.Errorf("storage client is required for upload")
 	}
 
+	// If we have a multipart upload ID, use resumable multipart upload
+	if ep.opts.UploadID != "" {
+		return ep.multipartUploadStage(ctx, r)
+	}
+
+	// Fall back to simple upload (used for non-resumable uploads)
 	bar := progress.CreateProgressBar("☁️  UPLOAD  ")
 	defer func() { _ = bar.Finish() }()
 
 	key := "data/" + ep.opts.ObjectID + ".enc"
 
-	// Compute SHA256 of the ciphertext while uploading
 	hasher := sha256.New()
 	progressReader := io.TeeReader(r, io.MultiWriter(bar, hasher))
 
@@ -188,8 +213,64 @@ func (ep *encryptionPipeline) uploadStage(ctx context.Context, r io.Reader, w io
 		return fmt.Errorf("upload stage: %w", err)
 	}
 
-	// Store the ciphertext checksum
 	copy(ep.cipherSHA[:], hasher.Sum(nil))
+	return nil
+}
 
+// multipartUploadStage uploads using manual multipart upload with resume support.
+func (ep *encryptionPipeline) multipartUploadStage(ctx context.Context, r io.Reader) error {
+	bar := progress.CreateProgressBar("☁️  UPLOAD  ")
+	defer func() { _ = bar.Finish() }()
+
+	rs, ok := ep.opts.B2Client.(storage.ResumableStorage)
+	if !ok {
+		return fmt.Errorf("storage client does not support resumable uploads")
+	}
+
+	key := "data/" + ep.opts.ObjectID + ".enc"
+	hasher := sha256.New()
+	reader := io.TeeReader(r, hasher)
+
+	partSize := ep.opts.PartSize
+	skipBytes := ep.opts.ResumeSkipBytes
+
+	// Skip already-uploaded bytes (hasher still processes them for correct CipherSHA)
+	if skipBytes > 0 {
+		skipped, err := io.CopyN(io.Discard, reader, skipBytes)
+		if err != nil {
+			return fmt.Errorf("skip completed bytes: %w", err)
+		}
+		bar.Add64(skipped)
+	}
+
+	// Determine starting part number
+	startPart := int32(skipBytes/partSize) + 1
+
+	buf := make([]byte, partSize)
+	partNum := startPart
+
+	for {
+		n, err := io.ReadFull(reader, buf)
+		if n > 0 {
+			bar.Add(n)
+			partBody := bytes.NewReader(buf[:n])
+			etag, uploadErr := rs.UploadPart(ctx, key, ep.opts.UploadID, partNum, partBody, int64(n))
+			if uploadErr != nil {
+				return fmt.Errorf("upload part %d: %w", partNum, uploadErr)
+			}
+			if ep.opts.OnPartUploaded != nil {
+				ep.opts.OnPartUploaded(partNum, etag, int64(n))
+			}
+			partNum++
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read part data: %w", err)
+		}
+	}
+
+	copy(ep.cipherSHA[:], hasher.Sum(nil))
 	return nil
 }

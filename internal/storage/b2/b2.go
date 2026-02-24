@@ -14,11 +14,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/thebluefowl/burrow/internal/storage"
 )
 
-// Compile-time check to ensure B2Client implements storage.Storage interface
+// Compile-time checks
 var _ storage.Storage = (*B2Client)(nil)
+var _ storage.ResumableStorage = (*B2Client)(nil)
 
 // B2Client encapsulates a Backblaze B2 S3-compatible client and default settings.
 type B2Client struct {
@@ -196,6 +198,147 @@ func (c *B2Client) GetMetadata(ctx context.Context, key string) (map[string]stri
 	}
 
 	return output.Metadata, nil
+}
+
+// CreateMultipartUpload initiates a multipart upload and returns the upload ID.
+func (c *B2Client) CreateMultipartUpload(ctx context.Context, key, contentType string, metadata map[string]string) (string, error) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	input := &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	}
+	if len(metadata) > 0 {
+		input.Metadata = metadata
+	}
+	output, err := c.client.CreateMultipartUpload(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("create multipart upload %s/%s: %w", c.bucket, key, err)
+	}
+	return *output.UploadId, nil
+}
+
+// UploadPart uploads a single part of a multipart upload.
+func (c *B2Client) UploadPart(ctx context.Context, key, uploadID string, partNumber int32, body io.ReadSeeker, contentLength int64) (string, error) {
+	input := &s3.UploadPartInput{
+		Bucket:        aws.String(c.bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(partNumber),
+		Body:          body,
+		ContentLength: aws.Int64(contentLength),
+	}
+	output, err := c.client.UploadPart(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("upload part %d of %s/%s: %w", partNumber, c.bucket, key, err)
+	}
+	return *output.ETag, nil
+}
+
+// CompleteMultipartUpload finalizes a multipart upload with the given parts.
+func (c *B2Client) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []storage.CompletedUploadPart) error {
+	s3Parts := make([]types.CompletedPart, len(parts))
+	for i, p := range parts {
+		s3Parts[i] = types.CompletedPart{
+			PartNumber: aws.Int32(p.PartNumber),
+			ETag:       aws.String(p.ETag),
+		}
+	}
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(c.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: s3Parts,
+		},
+	}
+	_, err := c.client.CompleteMultipartUpload(ctx, input)
+	if err != nil {
+		return fmt.Errorf("complete multipart upload %s/%s: %w", c.bucket, key, err)
+	}
+	return nil
+}
+
+// AbortMultipartUpload cancels an in-progress multipart upload.
+func (c *B2Client) AbortMultipartUpload(ctx context.Context, key, uploadID string) error {
+	input := &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(c.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	}
+	_, err := c.client.AbortMultipartUpload(ctx, input)
+	if err != nil {
+		return fmt.Errorf("abort multipart upload %s/%s: %w", c.bucket, key, err)
+	}
+	return nil
+}
+
+// ListParts returns the parts that have been uploaded for a multipart upload.
+func (c *B2Client) ListParts(ctx context.Context, key, uploadID string) ([]storage.CompletedUploadPart, error) {
+	var parts []storage.CompletedUploadPart
+	input := &s3.ListPartsInput{
+		Bucket:   aws.String(c.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	}
+	for {
+		output, err := c.client.ListParts(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("list parts %s/%s: %w", c.bucket, key, err)
+		}
+		for _, p := range output.Parts {
+			parts = append(parts, storage.CompletedUploadPart{
+				PartNumber: aws.ToInt32(p.PartNumber),
+				ETag:       aws.ToString(p.ETag),
+				Size:       aws.ToInt64(p.Size),
+			})
+		}
+		if !aws.ToBool(output.IsTruncated) {
+			break
+		}
+		input.PartNumberMarker = output.NextPartNumberMarker
+	}
+	return parts, nil
+}
+
+// HeadObject returns the size of an object.
+func (c *B2Client) HeadObject(ctx context.Context, key string) (int64, error) {
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	}
+	output, err := c.client.HeadObject(ctx, input)
+	if err != nil {
+		return 0, fmt.Errorf("head object %s/%s: %w", c.bucket, key, err)
+	}
+	return aws.ToInt64(output.ContentLength), nil
+}
+
+// DownloadRange downloads a byte range of an object.
+func (c *B2Client) DownloadRange(ctx context.Context, key string, w io.Writer, offset, length int64) error {
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(rangeHeader),
+	}
+	result, err := c.client.GetObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("range get %s/%s: %w", c.bucket, key, err)
+	}
+	defer result.Body.Close()
+	_, err = io.Copy(w, result.Body)
+	if err != nil {
+		return fmt.Errorf("copy range data: %w", err)
+	}
+	return nil
+}
+
+// PartSize returns the configured part size in bytes.
+func (c *B2Client) PartSize() int64 {
+	return c.partSizeMB * 1024 * 1024
 }
 
 // GetClient returns the underlying S3 client.

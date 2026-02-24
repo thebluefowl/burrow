@@ -31,7 +31,7 @@ func configDirPath() (string, error) {
 	return filepath.Join(dir, "burrow"), nil
 }
 
-func configFilePath() (string, error) {
+func ConfigFilePath() (string, error) {
 	dir, err := configDirPath()
 	if err != nil {
 		return "", err
@@ -48,7 +48,7 @@ func Save(cfg Config, password string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
-	path, err := configFilePath()
+	path, err := ConfigFilePath()
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func Save(cfg Config, password string) error {
 
 // Load reads, decrypts, and unmarshals the config using age passphrase mode.
 func Load(password string) (*Config, error) {
-	path, err := configFilePath()
+	path, err := ConfigFilePath()
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func Load(password string) (*Config, error) {
 }
 
 func Exists() bool {
-	path, err := configFilePath()
+	path, err := ConfigFilePath()
 	if err != nil {
 		return false
 	}

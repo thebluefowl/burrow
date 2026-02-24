@@ -169,6 +169,26 @@ You can update:
 
 Leave fields empty to keep current values.
 
+#### `config export`
+
+Exports your encrypted configuration as a base64-encoded string for backup.
+
+```bash
+burrow config export
+```
+
+Save this output somewhere safe. It contains your encrypted config (still protected by your master password).
+
+#### `config restore`
+
+Restores configuration from a previously exported base64 string.
+
+```bash
+burrow config restore
+```
+
+You'll be prompted to paste the exported string. If a config already exists, you'll be asked to confirm before overwriting.
+
 ## Architecture
 
 ### Encryption Pipeline
@@ -252,6 +272,8 @@ burrow/
 │   ├── index.go         # Index rebuild command
 │   ├── config.go        # Config command group
 │   ├── update.go        # Config update command
+│   ├── export.go        # Config export command
+│   ├── restore.go       # Config restore command
 │   └── setup.go         # Initial setup
 ├── internal/
 │   ├── archive/       # Tar archiving
